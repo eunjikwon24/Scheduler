@@ -528,7 +528,9 @@
       </section>
 
       <section class="panel">
-        <div class="phead"><h2>메모</h2><span class="sub">중요한 정보를 여기에</span></div>
+        <div class="phead"><h2>메모</h2>
+          <button class="mini" id="memoClean" type="button" style="display:none">중복 정리</button>
+          <span class="sub">중요한 정보를 여기에</span></div>
         <div class="memo">
           <textarea id="memo" placeholder="학번, 강의실, 과제 마감일, 계좌번호…&#10;여기 적어두면 어느 기기에서든 보여요."></textarea>
         </div>
@@ -632,7 +634,7 @@ var QUICK = [
 
 /* ---------- 상태 ---------- */
 var LS = "haru-track.v1";
-var state = { tasks:[], sessions:[], running:null, classes:[], events:[], inbox:[], memo:"", tombs:[], termFrom:"", termTo:"", showCls:false, clsOptSet:true, updatedAt:0 };
+var state = { tasks:[], sessions:[], running:null, classes:[], events:[], inbox:[], memo:"", memoAt:0, tombs:[], termFrom:"", termTo:"", showCls:false, clsOptSet:true, updatedAt:0 };
 var viewMode = "week";
 var monthAnchor = null;   /* 월간 보기에서 보고 있는 달 (선택한 날짜와 별개) */
 var selected = todayKey();
@@ -1353,6 +1355,22 @@ document.addEventListener("keydown", function(e){
     toast("되돌렸어요");
   }
 });
+/* 입력 중일 때는 화면을 다시 그리지 않습니다 — 커서를 뺏기지 않게 */
+var pendingRender = false;
+function isTyping(){
+  var a = document.activeElement;
+  return !!(a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA") && !a.readOnly);
+}
+function renderSafe(){
+  if (isTyping()){ pendingRender = true; return false; }
+  render(); return true;
+}
+document.addEventListener("focusout", function(){
+  setTimeout(function(){
+    if (pendingRender && !isTyping()){ pendingRender = false; render(); }
+  }, 120);
+});
+
 function toast(msg){
   var t = $("toast");
   t.textContent = msg; t.classList.add("on");
@@ -1426,7 +1444,7 @@ function ghPull(){
     writeLocal();
     var sig2 = JSON.stringify([state.tasks.length, state.events.length, state.inbox.length,
                                state.classes.length, state.memo]);
-    if (sig !== sig2){ if (document.activeElement === $("memo")) $("memo").blur(); render(); }
+    if (sig !== sig2) renderSafe();
     GH.last = Date.now(); GH.err = "";
     setSync("ok", "GitHub 동기화됨 · " + new Date().toLocaleTimeString("ko-KR"));
     return sig !== sig2;
@@ -1654,11 +1672,14 @@ function mergeState(A, B){
   });
   var newer = (B.updatedAt||0) > (A.updatedAt||0) ? B : A;
   var older = newer === A ? B : A;
-  var am = (A.memo||"").trim(), bm = (B.memo||"").trim(), memo;
-  if (am === bm) memo = am;
-  else if (!am) memo = bm;
-  else if (!bm) memo = am;
-  else memo = (newer.memo||"").trim() + "\n\n— 다른 기기에서 쓴 메모 —\n" + (older.memo||"").trim();
+  /* 메모는 나중에 고친 쪽을 씁니다. 언제 고쳤는지 모르는 옛 기록만 이어붙여 살립니다. */
+  var am = (A.memo||""), bm = (B.memo||"");
+  var aAt = A.memoAt || 0, bAt = B.memoAt || 0, memo, memoAt;
+  if (am.trim() === bm.trim()){ memo = am; memoAt = Math.max(aAt, bAt); }
+  else if (!am.trim()){ memo = bm; memoAt = bAt; }
+  else if (!bm.trim()){ memo = am; memoAt = aAt; }
+  else if (aAt || bAt){ memo = (aAt >= bAt) ? am : bm; memoAt = Math.max(aAt, bAt); }
+  else { memo = (newer.memo||"") + "\n\n— 다른 기기에서 쓴 메모 —\n" + (older.memo||""); memoAt = Date.now(); }
   return {
     tasks:    mergeList(A.tasks,    B.tasks,    tombs),
     events:   mergeList(A.events,   B.events,   tombs),
@@ -1667,6 +1688,7 @@ function mergeState(A, B){
     sessions: mergeList(A.sessions, B.sessions, {}),
     tombs:    (A.tombs||[]).concat(B.tombs||[]).slice(-800),
     memo:     memo,
+    memoAt:   memoAt,
     running:  newer.running || null,
     termFrom: newer.termFrom || older.termFrom || "",
     termTo:   newer.termTo   || older.termTo   || "",
@@ -1901,11 +1923,48 @@ $("inboxForm").onsubmit = function(e){
 };
 
 /* ---------- 메모 ---------- */
+/* 예전 버그로 같은 내용이 여러 번 이어붙은 메모를 한 벌로 정리합니다 */
+var MEMO_SEP = "— 다른 기기에서 쓴 메모 —";
+function cleanMemoText(t){
+  var parts = String(t).split(MEMO_SEP).map(function(x){ return x.trim(); }).filter(Boolean);
+  if (parts.length < 2) return t;
+  var keep = [];
+  parts.sort(function(a,b){ return b.length - a.length; });
+  parts.forEach(function(x){
+    for (var i=0;i<keep.length;i++){ if (keep[i].indexOf(x) >= 0) return; }
+    keep.push(x);
+  });
+  return keep.join("\n\n");
+}
+function updateMemoClean(){
+  var has = (state.memo||"").indexOf(MEMO_SEP) >= 0;
+  $("memoClean").style.display = has ? "inline-block" : "none";
+}
+$("memoClean").onclick = function(){
+  var before = state.memo || "";
+  var after = cleanMemoText(before);
+  if (after === before){ toast("정리할 게 없어요."); return; }
+  memoBackup = before;
+  state.memo = after; state.memoAt = Date.now();
+  $("memo").value = after;
+  touch(); updateMemoClean();
+  toast("정리했어요 (" + before.length + "자 → " + after.length + "자). 되돌리려면 다시 눌러주세요");
+  $("memoClean").textContent = "되돌리기";
+  $("memoClean").style.display = "inline-block";
+  $("memoClean").onclick = function(){
+    state.memo = memoBackup; state.memoAt = Date.now();
+    $("memo").value = memoBackup;
+    touch(); toast("되돌렸어요");
+    location.reload();
+  };
+};
+var memoBackup = "";
 (function(){
   var t = null;
   $("memo").addEventListener("input", function(){
     state.memo = this.value;
-    clearTimeout(t); t = setTimeout(function(){ touch(); }, 400);
+    state.memoAt = Date.now();
+    clearTimeout(t); t = setTimeout(function(){ touch(); }, 900);
   });
 })();
 
@@ -1915,6 +1974,7 @@ function render(){
   renderDayEvents(); renderInbox();
   var mm = $("memo");
   if (mm && document.activeElement !== mm && mm.value !== (state.memo||"")) mm.value = state.memo || "";
+  updateMemoClean();
   if (viewMode === "month") renderMonth();
 }
 
@@ -1958,7 +2018,7 @@ $("nextW").onclick = function(){ weekStart = addDays(weekStart,7); selected = ke
 function adopt(data){
   if (!data || !Array.isArray(data.tasks)) return false;
   state = { tasks:data.tasks||[], sessions:data.sessions||[], running:data.running||null,
-            classes:data.classes||[], events:data.events||[], inbox:data.inbox||[], memo:data.memo||"",
+            classes:data.classes||[], events:data.events||[], inbox:data.inbox||[], memo:data.memo||"", memoAt:data.memoAt||0,
             termFrom:data.termFrom||"", termTo:data.termTo||"",
             tombs:data.tombs||[],
             showCls:data.showCls === true, clsOptSet:data.clsOptSet === true, updatedAt:data.updatedAt||0 };
@@ -2001,7 +2061,7 @@ function boot(){
     setSync("pending", "GitHub에서 불러오는 중…");
     ghPull().then(function(){ if (GH.dirty) ghPush(); });
     setInterval(function(){
-      if (!document.hidden && !GH.dirty) ghPull();
+      if (!document.hidden && !GH.dirty && !isTyping()) ghPull();
     }, 45000);
     document.addEventListener("visibilitychange", function(){
       if (!document.hidden && ghOn() && Date.now() - GH.last > 8000) ghPull();
