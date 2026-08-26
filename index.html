@@ -1382,6 +1382,7 @@ function toast(msg){
    기록은 내 계정의 비공개 Gist 한 곳에 있고, 기기마다 토큰만 저장합니다.
    ========================================================= */
 var GH = { token:"", gist:"", user:"", last:0, pushing:false, pulling:false, dirty:false, err:"" };
+var APP_VERSION = "2026.08.26-4";
 var GIST_DESC = "haru-track-data";
 var GIST_FILE = "plan.json";
 
@@ -1538,6 +1539,7 @@ $("ghOut").onclick = function(){
 /* ---------- 저장 상태 자세히 보기 ---------- */
 function diagLines(){
   return [
+    "■ 앱 버전: " + APP_VERSION,
     "■ 이 기기 저장: 정상",
     "■ 페이지에 저장(기기 간 연동): " + diag.use,
     "■ 저장 방식: " + (ghOn() ? ("GitHub 비공개 Gist (@" + (GH.user||"?") + ")") : diag.mode),
@@ -1672,14 +1674,14 @@ function mergeState(A, B){
   });
   var newer = (B.updatedAt||0) > (A.updatedAt||0) ? B : A;
   var older = newer === A ? B : A;
-  /* 메모는 나중에 고친 쪽을 씁니다. 언제 고쳤는지 모르는 옛 기록만 이어붙여 살립니다. */
+  /* 메모는 나중에 고친 쪽 하나만 씁니다. 절대 이어붙이지 않습니다. */
   var am = (A.memo||""), bm = (B.memo||"");
   var aAt = A.memoAt || 0, bAt = B.memoAt || 0, memo, memoAt;
   if (am.trim() === bm.trim()){ memo = am; memoAt = Math.max(aAt, bAt); }
   else if (!am.trim()){ memo = bm; memoAt = bAt; }
   else if (!bm.trim()){ memo = am; memoAt = aAt; }
-  else if (aAt || bAt){ memo = (aAt >= bAt) ? am : bm; memoAt = Math.max(aAt, bAt); }
-  else { memo = (newer.memo||"") + "\n\n— 다른 기기에서 쓴 메모 —\n" + (older.memo||""); memoAt = Date.now(); }
+  else if (aAt !== bAt){ memo = (aAt > bAt) ? am : bm; memoAt = Math.max(aAt, bAt); }
+  else { memo = (newer.memo||""); memoAt = Math.max(aAt, bAt, newer.updatedAt||0); }
   return {
     tasks:    mergeList(A.tasks,    B.tasks,    tombs),
     events:   mergeList(A.events,   B.events,   tombs),
@@ -1927,13 +1929,16 @@ $("inboxForm").onsubmit = function(e){
 var MEMO_SEP = "— 다른 기기에서 쓴 메모 —";
 function cleanMemoText(t){
   var parts = String(t).split(MEMO_SEP).map(function(x){ return x.trim(); }).filter(Boolean);
-  if (parts.length < 2) return t;
+  if (!parts.length) return "";
+  if (parts.length === 1) return parts[0];
+  var order = parts.slice().sort(function(a,b){ return b.length - a.length; });
   var keep = [];
-  parts.sort(function(a,b){ return b.length - a.length; });
-  parts.forEach(function(x){
+  order.forEach(function(x){
     for (var i=0;i<keep.length;i++){ if (keep[i].indexOf(x) >= 0) return; }
     keep.push(x);
   });
+  /* 원래 나온 순서대로 되돌려 놓습니다 */
+  keep.sort(function(a,b){ return parts.indexOf(a) - parts.indexOf(b); });
   return keep.join("\n\n");
 }
 function updateMemoClean(){
@@ -1964,6 +1969,7 @@ var memoBackup = "";
   $("memo").addEventListener("input", function(){
     state.memo = this.value;
     state.memoAt = Date.now();
+    updateMemoClean();
     clearTimeout(t); t = setTimeout(function(){ touch(); }, 900);
   });
 })();
@@ -2041,7 +2047,7 @@ function boot(){
   weekStart = mondayOf(fromKey(selected));
   render();
   setSync("local", "이 기기에 저장됨");
-  $("foot").textContent = "⠿ 를 잡고 끌면 순서가 바뀌고, ✎ 로 이름·태그·시간을 고칠 수 있어요. 시간을 정한 할 일은 오른쪽 시간표에 놓입니다.";
+  $("foot").textContent = "v" + APP_VERSION + " · ⠿ 를 잡고 끌면 순서가 바뀌고, ✎ 로 이름·태그·시간을 고칠 수 있어요. 시간을 정한 할 일은 오른쪽 시간표에 놓입니다.";
 
   fetch("data/plan.json", { cache:"no-store" }).then(function(r){
     diag.fetch = r.ok ? "읽음 (" + r.status + ")" : "없음 (" + r.status + ")";
