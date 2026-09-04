@@ -618,6 +618,7 @@
     <span class="todayline" id="todayLine"></span>
     <button class="themebtn" id="palBtn" type="button" title="색과 글자 크기" style="margin-left:auto">🎨 꾸미기</button>
     <button class="themebtn" id="notesBtn" type="button" title="노트" style="margin-left:0">📓 노트</button>
+    <a class="themebtn" href="./papers.html" title="논문 노트" style="margin-left:0;text-decoration:none;display:inline-flex;align-items:center;line-height:17px">📄 논문</a>
     <button class="themebtn" id="expBtn" type="button" title="이 기기의 내용을 파일로 내보내기" style="margin-left:0">↓ 내보내기</button>
     <button class="themebtn" id="impBtn" type="button" title="파일에서 내용 가져오기" style="margin-left:0">↑ 가져오기</button>
     <input type="file" id="impFile" style="display:none">
@@ -742,6 +743,10 @@
       <span class="fslabel">배경 그림</span>
       <input type="checkbox" id="artToggle" style="margin-left:auto;accent-color:var(--accent);width:17px;height:17px">
     </label>
+    <div class="fsrow">
+      <span class="fslabel">한 주 시작</span>
+      <div class="fsbtns" id="wkBtns"></div>
+    </div>
     <div class="palgrid" id="palGrid"></div>
     <button class="sbtn close" id="palClose" type="button">닫기</button>
   </div>
@@ -855,11 +860,11 @@ var QUICK = [
 
 /* ---------- 상태 ---------- */
 var LS = "haru-track.v1";
-var state = { tasks:[], sessions:[], running:null, classes:[], events:[], inbox:[], notes:[], stickers:{}, stickersAt:0, palette:"plum", paletteAt:0, nick:"", nickAt:0, memo:"", memoAt:0, tombs:[], termFrom:"", termTo:"", showCls:false, clsOptSet:true, updatedAt:0 };
+var state = { tasks:[], sessions:[], running:null, classes:[], events:[], inbox:[], notes:[], stickers:{}, stickersAt:0, palette:"plum", paletteAt:0, nick:"", nickAt:0, memo:"", memoAt:0, tombs:[], termFrom:"", termTo:"", showCls:false, clsOptSet:true, wkStart:0, wkStartAt:0, updatedAt:0 };
 var viewMode = "week";
 var monthAnchor = null;   /* 월간 보기에서 보고 있는 달 (선택한 날짜와 별개) */
 var selected = todayKey();
-var weekStart = mondayOf(new Date());
+var weekStart = weekStartOf(new Date());
 var artifactNS = null, saveMode = "local", saveTimer = null, ticking = null;
 var diag = { use:"확인 중", fetch:"확인 중", lastSave:"아직 없음", lastErr:"", remote:"-", mode:"데이터 파일" };
 var FILE_BLOCKED = ["capability_disabled","capability_removed","read_only_path","not_declared","invalid_content","transform_error"];
@@ -867,7 +872,25 @@ var FILE_BLOCKED = ["capability_disabled","capability_removed","read_only_path",
 function todayKey(){ var d = new Date(); return key(d); }
 function key(d){ return new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10); }
 function fromKey(k){ var p = k.split("-"); return new Date(+p[0], +p[1]-1, +p[2]); }
-function mondayOf(d){ var x = new Date(d); var w = (x.getDay()+6)%7; x.setDate(x.getDate()-w); x.setHours(0,0,0,0); return x; }
+/* 한 주를 일요일에서 시작할지 월요일에서 시작할지 — 0=일, 1=월 */
+function wkS(){ return (state && state.wkStart === 1) ? 1 : 0; }
+function weekStartOf(d){ var x = new Date(d); var w = (x.getDay() - wkS() + 7) % 7;
+  x.setDate(x.getDate()-w); x.setHours(0,0,0,0); return x; }
+/* 요일 이름 — 화면에 보이는 순서대로 */
+var DAYNM = ["일","월","화","수","목","금","토"];
+function wdName(d){ return DAYNM[d.getDay()]; }
+function headDays(){                      /* 달력 머리글 */
+  var out = [];
+  for (var i=0;i<7;i++) out.push(DAYNM[(wkS()+i)%7]);
+  return out;
+}
+/* 수업 시간표는 예전부터 0=월 로 저장돼 있어서, 저장 값은 그대로 두고 보이는 순서만 바꿉니다 */
+function clsDayOrder(){                   /* 화면 순서 → 저장 값 */
+  var out = [];
+  for (var i=0;i<7;i++) out.push(((wkS()+i)+6) % 7);
+  return out;
+}
+function clsDayRank(v){ return (v + 1 - wkS() + 7) % 7; }   /* 저장 값 → 화면 순서 */
 function addDays(d,n){ var x = new Date(d); x.setDate(x.getDate()+n); return x; }
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
@@ -1074,17 +1097,17 @@ function renderStrip(){
   var offMonth = viewMode === "month" && monthAnchor &&
     (monthAnchor.getMonth() !== new Date().getMonth() || monthAnchor.getFullYear() !== new Date().getFullYear());
   $("goToday").style.display = (selected === todayKey() && !offMonth) ? "none" : "inline-block";
-  var W = ["월","화","수","목","금","토","일"];
   for (var i=0;i<7;i++){
     (function(i){
       var d = addDays(weekStart, i), k = key(d);
       var list = tasksOf(k), done = list.filter(function(t){ return t.done; }).length;
       var b = document.createElement("button");
+      b.dataset.k = k;
       b.className = "day" + (k === selected ? " sel" : "") + (k === todayKey() ? " today" : "");
       var ev = eventsOn(k);
       var stk = stickersOn(k), hol = holidayOf(k);
       if (isRedDay(k)) b.classList.add("red");
-      b.innerHTML = '<div class="w">'+W[i]+'</div><div class="n">'+d.getDate()+'</div>' +
+      b.innerHTML = '<div class="w">'+wdName(d)+'</div><div class="n">'+d.getDate()+'</div>' +
         (stk.length ? '<div class="stks">'+stk.slice(0,3).join("")+'</div>' : "") +
         (hol ? '<div class="hol">'+hol+'</div>' : "") +
         (ev.length ? '<div class="evdot" style="background:'+tagColor(ev[0].tag)+'"></div>' : "") +
@@ -1540,11 +1563,10 @@ function renderStats(){
     '<div class="st"><div class="k">이 날 완료</div><div class="v">'+ dayDone +'<small>/'+ dayList.length +'</small></div></div>' +
     '<div class="st"><div class="k">주간 완료</div><div class="v">'+ doneN +'<small>/'+ allN +'</small></div></div>';
 
-  var W = ["월","화","수","목","금","토","일"];
   $("week").innerHTML = days.map(function(k,i){
     var list = tasksOf(k), dn = list.filter(function(t){ return t.done; }).length;
     var pct = list.length ? dn/list.length*100 : 0;
-    return '<div class="wrow"><span class="wd">'+W[i]+'</span>' +
+    return '<div class="wrow"><span class="wd">'+wdName(fromKey(k))+'</span>' +
       '<span class="wbar"><span style="width:'+pct.toFixed(1)+'%"></span></span>' +
       '<span class="wv">'+(list.length ? dn+" / "+list.length : "—")+'</span></div>';
   }).join("");
@@ -1788,8 +1810,25 @@ function paintPalettePicker(){
     box.appendChild(b2);
   });
 }
+function paintWkBtns(){
+  var box = $("wkBtns"); if (!box) return;
+  box.innerHTML = "";
+  [{ v:0, name:"일요일부터" }, { v:1, name:"월요일부터" }].forEach(function(o){
+    var b2 = document.createElement("button");
+    b2.type = "button"; b2.textContent = o.name;
+    b2.className = (wkS() === o.v) ? "on" : "";
+    b2.onclick = function(){
+      if (wkS() === o.v) return;
+      state.wkStart = o.v; state.wkStartAt = Date.now();
+      weekStart = weekStartOf(fromKey(selected));
+      touch(); paintWkBtns(); render();
+      toast(o.name + " 로 바꿨어요.");
+    };
+    box.appendChild(b2);
+  });
+}
 $("palBtn").onclick = function(){
-  paintPalettePicker(); paintFsBtns();
+  paintPalettePicker(); paintFsBtns(); paintWkBtns();
   $("artToggle").checked = artOn;
   $("palModal").classList.add("on");
 };
@@ -1895,11 +1934,11 @@ function renderMonth(){
   if (!monthAnchor) monthAnchor = fromKey(selected);
   var anchor = monthAnchor;
   var first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
-  var lead = (first.getDay()+6)%7;
+  var lead = (first.getDay() - wkS() + 7) % 7;
   var start = addDays(first, -lead);
   $("monthLbl").textContent = anchor.getFullYear() + "년 " + (anchor.getMonth()+1) + "월";
 
-  var html = '<div class="mhead">' + WD.map(function(w){ return '<span>'+w+'</span>'; }).join("") + '</div><div class="mgrid">';
+  var html = '<div class="mhead">' + headDays().map(function(w){ return '<span>'+w+'</span>'; }).join("") + '</div><div class="mgrid">';
   for (var i=0;i<42;i++){
     var d = addDays(start,i), k = key(d);
     if (i >= 35 && d.getMonth() !== anchor.getMonth()) break;
@@ -1907,7 +1946,7 @@ function renderMonth(){
     var evs = eventsOn(k);
     var cs = state.showCls ? classesOn(k) : [];
     var cap = 3, shown = 0, inner = "";
-    var isMon = ((d.getDay()+6)%7) === 0;
+    var isMon = d.getDay() === wkS();   /* 그 주의 첫 칸 — 기간 일정 이름을 다시 적어줍니다 */
     evs.forEach(function(e){
       var st = (e.from === k), en = (e.to === k);
       inner += '<span class="mspan'+(st?" s":"")+(en?" e":"")+'" style="--tagc:'+tagColor(e.tag)+'">' +
@@ -1937,7 +1976,7 @@ function renderMonth(){
   Array.prototype.forEach.call(box.querySelectorAll(".mcell[data-k]"), function(c){
     c.onclick = function(){
       selected = c.dataset.k;
-      weekStart = mondayOf(fromKey(selected));
+      weekStart = weekStartOf(fromKey(selected));
       var d = fromKey(selected);
       if (d.getMonth() !== monthAnchor.getMonth() || d.getFullYear() !== monthAnchor.getFullYear())
         monthAnchor = new Date(d.getFullYear(), d.getMonth(), 1);
@@ -1984,13 +2023,18 @@ function termText(c){
 }
 function renderClasses(){
   var box = $("clsBox");
+  function firstRank(c){
+    var r = 99; (c.days||[]).forEach(function(d){ r = Math.min(r, clsDayRank(d)); });
+    return r;
+  }
   var rows = state.classes.slice().sort(function(a,b){
-    return (Math.min.apply(null,a.days||[9]) - Math.min.apply(null,b.days||[9])) || (toMin(a.start)-toMin(b.start));
+    return (firstRank(a) - firstRank(b)) || (toMin(a.start)-toMin(b.start));
   });
   var opt = '<label class="clsopt"><input type="checkbox" id="clsShow"' + (state.showCls ? " checked" : "") +
     '> 월간 달력에도 수업 표시 <span style="color:var(--muted);font-size:11px">— 매주 반복돼서 기본은 꺼둠</span></label>';
   var html = rows.length ? rows.map(function(c){
-    return '<div class="clsrow"><span class="cd">' + (c.days||[]).map(function(d){ return WD[d]; }).join("·") +
+    var ds = (c.days||[]).slice().sort(function(x,y){ return clsDayRank(x) - clsDayRank(y); });
+    return '<div class="clsrow"><span class="cd">' + ds.map(function(d){ return WD[d]; }).join("·") +
       ' ' + c.start + '</span><span class="cn">' + escapeHtml(c.name) +
       (c.room ? ' <span style="color:var(--muted);font-size:11.5px">'+escapeHtml(c.room)+'</span>' : "") +
       '</span><span class="cd" style="opacity:.8">' + termText(c) + '</span>' +
@@ -1998,8 +2042,8 @@ function renderClasses(){
   }).join("") : '<div style="padding:16px 4px;color:var(--muted);font-size:12.5px;line-height:1.8">아직 등록한 수업이 없어요.<br>아래에서 요일과 시간을 정해 추가하면, 매주 그 요일 시간표에 자동으로 뜹니다.</div>';
 
   html += '<div class="clsadd">' +
-    '<span class="daypick">' + WD.map(function(w,i){
-      return '<button type="button" data-d="'+i+'"'+(newClsDays.indexOf(i)>=0?' class="on"':'')+'>'+w+'</button>';
+    '<span class="daypick">' + clsDayOrder().map(function(i){
+      return '<button type="button" data-d="'+i+'"'+(newClsDays.indexOf(i)>=0?' class="on"':'')+'>'+WD[i]+'</button>';
     }).join("") + '</span>' +
     '<input type="text" id="clsName" placeholder="수업 이름" autocomplete="off">' +
     '<input type="text" id="clsRoom" placeholder="강의실" style="max-width:88px" autocomplete="off">' +
@@ -2091,7 +2135,7 @@ function toast(msg){
    기록은 내 계정의 비공개 Gist 한 곳에 있고, 기기마다 토큰만 저장합니다.
    ========================================================= */
 var GH = { token:"", gist:"", user:"", last:0, pushing:false, pulling:false, dirty:false, err:"" };
-var APP_VERSION = "2026.08.26-10";
+var APP_VERSION = "2026.09.04-11";
 var GIST_DESC = "haru-track-data";
 var GIST_FILE = "plan.json";
 
@@ -2403,6 +2447,8 @@ function mergeState(A, B){
     paletteAt: Math.max(A.paletteAt||0, B.paletteAt||0),
     nick: ((A.nickAt||0) >= (B.nickAt||0) ? (A.nick||"") : (B.nick||"")),
     nickAt: Math.max(A.nickAt||0, B.nickAt||0),
+    wkStart: ((A.wkStartAt||0) >= (B.wkStartAt||0) ? (A.wkStart||0) : (B.wkStart||0)),
+    wkStartAt: Math.max(A.wkStartAt||0, B.wkStartAt||0),
     sessions: mergeList(A.sessions, B.sessions, {}),
     tombs:    (A.tombs||[]).concat(B.tombs||[]).slice(-800),
     memo:     memo,
@@ -2614,7 +2660,7 @@ function renderInbox(){
                          done:false, ord:mx+1, at:Date.now() });
       tomb(it.id);
       state.inbox = state.inbox.filter(function(x){ return x.id !== it.id; });
-      selected = t0; weekStart = mondayOf(new Date());
+      selected = t0; weekStart = weekStartOf(new Date());
       touch(); render();
     };
 
@@ -2924,6 +2970,8 @@ function paintMemo(){
 }
 
 function render(){
+  /* 다른 기기에서 '한 주 시작'을 바꿔 받아왔을 수도 있으니 매번 맞춰 둡니다 */
+  if ((weekStart.getDay() - wkS() + 7) % 7 !== 0) weekStart = weekStartOf(weekStart);
   renderStrip(); renderLive(); renderTasks(); renderQuick();
   renderSchedule(); renderStats(); renderClasses(); renderEvents();
   renderDayEvents(); renderInbox();
@@ -2973,10 +3021,10 @@ $("pushTmr").onclick = function(){
   var tmr = key(addDays(fromKey(selected),1));
   var mx = tasksOf(tmr).reduce(function(m,t){ return Math.max(m, t.ord == null ? -1 : t.ord); }, -1);
   left.forEach(function(t,i){ t.date = tmr; t.ord = mx + 1 + i; up(t); });
-  touch(); selected = tmr; weekStart = mondayOf(fromKey(selected)); render();
+  touch(); selected = tmr; weekStart = weekStartOf(fromKey(selected)); render();
 };
 $("goToday").onclick = function(){
-  selected = todayKey(); weekStart = mondayOf(new Date());
+  selected = todayKey(); weekStart = weekStartOf(new Date());
   monthAnchor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   render();
 };
@@ -2990,6 +3038,7 @@ function adopt(data){
             classes:data.classes||[], events:data.events||[], inbox:data.inbox||[], notes:data.notes||[], stickers:data.stickers||{}, stickersAt:data.stickersAt||0,
             palette:data.palette||"plum", paletteAt:data.paletteAt||0,
             nick:data.nick||"", nickAt:data.nickAt||0,
+            wkStart:data.wkStart===1?1:0, wkStartAt:data.wkStartAt||0,
             memo:data.memo||"", memoAt:data.memoAt||0,
             termFrom:data.termFrom||"", termTo:data.termTo||"",
             tombs:data.tombs||[],
@@ -3015,7 +3064,7 @@ function boot(){
   else if (local) adopt(local);
   else if (seed) adopt(seed);
   if (state.palette) applyPalette(state.palette);
-  weekStart = mondayOf(fromKey(selected));
+  weekStart = weekStartOf(fromKey(selected));
   render();
   setSync("local", "이 기기에 저장됨");
   $("foot").textContent = "v" + APP_VERSION + " · 시간표의 일정은 위아래로 끌어 옮길 수 있어요. ⠿ 를 잡고 끌면 순서가 바뀌고, ✎ 로 이름·태그·시간을 고칠 수 있어요. 시간을 정한 할 일은 오른쪽 시간표에 놓입니다.";
